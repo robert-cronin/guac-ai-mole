@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Guac-AI-Mole</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.2/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.22.20/babel.min.js"></script>
+    <link
+      href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="text/babel">
+      function App() {
+        const [query, setQuery] = React.useState("");
+        const [result, setResult] = React.useState(null);
+        const [loading, setLoading] = React.useState(false);
+        const [error, setError] = React.useState(null);
+        const [selectedModel, setSelectedModel] = React.useState("gpt-4");
+        const [temperature, setTemperature] = React.useState(0);
+
+        const analyze = async () => {
+          setLoading(true);
+          setError(null);
+          try {
+            const response = await fetch("/api/v1/analyze", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                query,
+                options: {
+                  model: "gpt-4o-mini",
+                  temperature: 0,
+                },
+              }),
+            });
+
+            if (!response.ok) throw new Error("Analysis failed");
+            const data = await response.json();
+            setResult(data);
+          } catch (error) {
+            console.error("Analysis failed:", error);
+            setError(error.message);
+          } finally {
+            setLoading(false);
+          }
+        };
+
+        return (
+          <div className="max-w-4xl mx-auto p-6">
+            <h1 className="text-3xl font-bold mb-4">🥑 Guac-AI-Mole</h1>
+            <p className="text-lg text-gray-600 mb-4">
+              Charting the Course for Secure Software Supply Chain
+            </p>
+            <p className="text-lg text-gray-600 mb-4">
+              Ask questions about your software supply chain and get answers
+              from the Guac-AI-Mole!
+            </p>
+
+            {error && (
+              <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <div className="flex items-center gap-2 text-red-700">
+                  <strong>Error</strong>
+                </div>
+                <div className="mt-1 text-red-600">{error}</div>
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <textarea
+                className="w-full p-4 border rounded min-h-[120px]"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Enter your supply chain analysis query..."
+              />
+
+              <button
+                className="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+                onClick={analyze}
+                disabled={loading || !query.trim()}
+              >
+                {loading ? (
+                  <span className="flex items-center gap-2">
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                        fill="none"
+                      />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      />
+                    </svg>
+                    Analyzing...
+                  </span>
+                ) : (
+                  "Analyze"
+                )}
+              </button>
+            </div>
+
+            {result && (
+              <div className="mt-8 border rounded-lg p-6 bg-gray-50">
+                <h2 className="text-2xl font-bold mb-4">Analysis Result</h2>
+                <div
+                  className="prose max-w-none mb-4"
+                  dangerouslySetInnerHTML={{
+                    __html: marked.parse(result.result),
+                  }}
+                />
+
+                {result.supportingData && (
+                  <div className="mt-6">
+                    <h3 className="text-xl font-bold mb-2">Supporting Data</h3>
+                    <pre className="bg-gray-100 p-4 rounded overflow-x-auto">
+                      {JSON.stringify(result.supportingData, null, 2)}
+                    </pre>
+                  </div>
+                )}
+
+                <div className="mt-6 flex items-center gap-4 text-sm text-gray-500">
+                  <span>Model: {result.metadata.model}</span>
+                  <span>Duration: {result.metadata.duration}</span>
+                  <span>Tokens: {result.metadata.tokensUsed}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      ReactDOM.render(<App />, document.getElementById("root"));
+    </script>
+  </body>
+</html>

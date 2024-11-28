@@ -1,0 +1,18 @@
+server:
+  port: "8000"
+  host: "0.0.0.0"
+  read_timeout: 30s
+  write_timeout: 30s
+
+openai:
+  provider: "azure"
+  # For Azure:
+  api_endpoint: "https://robbieaidev.openai.azure.com"
+  deployment_name: "gpt-4o-mini"
+  # For OpenAI:
+  # api_endpoint: "https://api.openai.com/v1"
+  # model: "gpt-4"
+
+guac:
+  graphql_endpoint: "http://localhost:8080/query"
+  timeout: 30s

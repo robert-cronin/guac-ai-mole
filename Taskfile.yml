@@ -1,0 +1,41 @@
+version: '3'
+
+tasks:
+  build:
+    cmds:
+      - go build -o bin/guac-ai-mole ./cmd/server/main.go
+
+  test:
+    cmds:
+      - go test ./...
+
+  lint:
+    cmds:
+      - golangci-lint run
+
+  run:
+    cmds:
+      - go run ./cmd/server/main.go
+
+  clean:
+    cmds:
+      - rm -rf bin/
+
+  # Docker tasks
+  docker-build:
+    cmds:
+      - docker build -t guac-ai-mole .
+
+  docker-run:
+    cmds:
+      - docker run guac-ai-mole
+
+  # Development tasks
+  dev:
+    cmds:
+      - go run main.go
+
+  # Default task when just running 'task'
+  default:
+    cmds:
+      - task: build
