@@ -13,8 +13,8 @@ type AnalysisOptions struct {
 	Model string `json:"model,omitempty"`
 
 	// MaxTokens limits the LLM response length
-	MaxTokens int `json:"maxTokens,omitempty"`
+	MaxTokens int64 `json:"maxTokens,omitempty"`
 
 	// Temperature controls randomness (0.0-1.0)
-	Temperature float32 `json:"temperature,omitempty"`
+	Temperature float64 `json:"temperature,omitempty"`
 }

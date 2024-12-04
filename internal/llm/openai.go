@@ -2,9 +2,10 @@ package llm
 
 import (
 	"context"
-	"encoding/json"
 
-	openai "github.com/sashabaranov/go-openai"
+	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/azure"
+	"github.com/openai/openai-go/option"
 	"github.com/sozercan/guac-ai-mole/internal/config"
 )
 
@@ -19,19 +20,15 @@ func NewOpenAI(cfg *config.OpenAIConfig) (*OpenAI, error) {
 
 	switch cfg.Provider {
 	case "azure":
-		config := openai.DefaultAzureConfig(cfg.APIKey, cfg.APIEndpoint)
-		config.AzureModelMapperFunc = func(model string) string {
-			return cfg.DeploymentName
-		}
-		config.APIVersion = cfg.APIVersion
-		client = openai.NewClientWithConfig(config)
-
+		client = openai.NewClient(
+			azure.WithEndpoint(cfg.APIEndpoint, cfg.APIVersion),
+			azure.WithAPIKey(cfg.APIKey),
+		)
 	default: // "openai"
-		config := openai.DefaultConfig(cfg.APIKey)
-		if cfg.APIEndpoint != "" {
-			config.BaseURL = cfg.APIEndpoint
-		}
-		client = openai.NewClientWithConfig(config)
+		client = openai.NewClient(
+			option.WithAPIKey(cfg.APIKey),
+			option.WithBaseURL(cfg.APIEndpoint),
+		)
 	}
 
 	return &OpenAI{
@@ -51,40 +48,17 @@ func (o *OpenAI) Analyze(prompt string, opts ...Option) (*Response, error) {
 		opt(options)
 	}
 
-	// Convert our function definitions to OpenAI format
-	var tools []openai.Tool
-	if len(options.Functions) > 0 {
-		tools = make([]openai.Tool, len(options.Functions))
-		for i, fn := range options.Functions {
-			oaiFunc := openai.FunctionDefinition{
-				Name:        fn.Name,
-				Description: fn.Description,
-				Parameters:  rawJSON(fn.Parameters),
-			}
-			tools[i] = openai.Tool{
-				Type:     openai.ToolTypeFunction,
-				Function: &oaiFunc,
-			}
-		}
-	}
-
-	resp, err := o.client.CreateChatCompletion(
+	resp, err := o.client.Chat.Completions.New(
 		context.Background(),
-		openai.ChatCompletionRequest{
-			Model: options.Model,
-			Messages: []openai.ChatCompletionMessage{
-				{
-					Role:    openai.ChatMessageRoleSystem,
-					Content: "You are guac-ai-mole, a helpful AI assistant analyzing software supply chain data.",
-				},
-				{
-					Role:    openai.ChatMessageRoleUser,
-					Content: prompt,
-				},
-			},
-			Tools:       tools,
-			Temperature: options.Temperature,
-			MaxTokens:   options.MaxTokens,
+		openai.ChatCompletionNewParams{
+			Model: openai.F(options.Model),
+			Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
+				openai.SystemMessage("You are guac-ai-mole, a helpful AI assistant analyzing software supply chain data."),
+				openai.UserMessage(prompt),
+			}),
+			Tools:       openai.F(options.Tools),
+			Temperature: openai.F(options.Temperature),
+			MaxTokens:   openai.F(options.MaxTokens),
 		},
 	)
 	if err != nil {
@@ -101,21 +75,15 @@ func (o *OpenAI) Analyze(prompt string, opts ...Option) (*Response, error) {
 	}
 
 	// Check for function calls in the response
-	if len(resp.Choices) > 0 && resp.Choices[0].Message.ToolCalls != nil && len(resp.Choices[0].Message.ToolCalls) > 0 {
+	if len(resp.Choices) > 0 && len(resp.Choices[0].Message.ToolCalls) > 0 {
 		toolCall := resp.Choices[0].Message.ToolCalls[0]
 		response.FunctionCall = &FunctionResponse{
 			Name:      toolCall.Function.Name,
 			Arguments: toolCall.Function.Arguments,
 		}
-	} else {
+	} else if len(resp.Choices) > 0 {
 		response.Content = resp.Choices[0].Message.Content
 	}
 
 	return response, nil
-}
-
-// Helper function to convert our JSONSchema to raw json for the OpenAI API
-func rawJSON(schema JSONSchema) json.RawMessage {
-	data, _ := json.Marshal(schema)
-	return data
 }

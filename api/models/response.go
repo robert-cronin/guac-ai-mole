@@ -27,7 +27,7 @@ type AnalysisMetadata struct {
 	Model string `json:"model"`
 
 	// Tokens used in analysis
-	TokensUsed int `json:"tokensUsed"`
+	TokensUsed int64 `json:"tokensUsed"`
 
 	// Tracks agent steps
 	Steps int `json:"steps"`

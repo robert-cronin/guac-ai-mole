@@ -9,22 +9,15 @@ import (
 	"github.com/sozercan/guac-ai-mole/api/models"
 	"github.com/sozercan/guac-ai-mole/internal/guac"
 	"github.com/sozercan/guac-ai-mole/internal/llm"
+	"github.com/sozercan/guac-ai-mole/internal/tools"
 )
 
 const (
-	MaxSteps     = 5
+	MaxSteps = 5
 	// TODO: we should programatically insert the available functions here with signatures
 	SystemPrompt = `You are an AI agent analyzing software supply chain data. You can:
 1. Query for more information using available functions
 2. Return a final response to the user
-
-Available functions:
-- get_package_dependencies: Get dependencies for a package
-- get_vulnerabilities: Get vulnerability information for CVEs
-- get_source_scorecard: Get OpenSSF Scorecard data for a source repository
-- get_sbom_attestations: Get SBOM attestations for a package
-- get_vex_statements: Get VEX statements for a vulnerability
-- get_package_equality: Get package equality assertions
 
 For each query, consider what additional context might be helpful:
 - For dependencies, check if sources have good scorecard ratings
@@ -51,147 +44,6 @@ Previous findings: %s
 User Query: %s`
 )
 
-// Define GUAC functions that can be called by the LLM
-var guacFunctions = []llm.FunctionDefinition{
-	{
-		Name:        "get_package_dependencies",
-		Description: "Get the dependencies for a specified package",
-		Parameters: llm.JSONSchema{
-			Type: "object",
-			Properties: map[string]llm.Property{
-				"package_type": {
-					Type:        "string",
-					Description: "The type of package (e.g., npm, maven)",
-				},
-				"package_name": {
-					Type:        "string",
-					Description: "The name of the package",
-				},
-			},
-			Required: []string{"package_type", "package_name"},
-		},
-	},
-	{
-		Name:        "get_vulnerabilities",
-		Description: "Get vulnerabilities for a specific vulnerability ID",
-		Parameters: llm.JSONSchema{
-			Type: "object",
-			Properties: map[string]llm.Property{
-				"vulnerability_id": {
-					Type:        "string",
-					Description: "The ID of the vulnerability (e.g., CVE-2023-1234)",
-				},
-			},
-			Required: []string{"vulnerability_id"},
-		},
-	},
-	{
-		Name:        "get_source_scorecard",
-		Description: "Get OpenSSF Scorecard data for a source repository",
-		Parameters: llm.JSONSchema{
-			Type: "object",
-			Properties: map[string]llm.Property{
-				"source_type": {
-					Type:        "string",
-					Description: "The type of source (e.g., git)",
-				},
-				"namespace": {
-					Type:        "string",
-					Description: "The namespace (e.g., github.com/owner)",
-				},
-				"name": {
-					Type:        "string",
-					Description: "The repository name",
-				},
-			},
-			Required: []string{"source_type", "namespace", "name"},
-		},
-	},
-	{
-		Name:        "get_sbom_attestations",
-		Description: "Get SBOM attestations for a package",
-		Parameters: llm.JSONSchema{
-			Type: "object",
-			Properties: map[string]llm.Property{
-				"package_type": {
-					Type:        "string",
-					Description: "The type of package (e.g., npm, maven)",
-				},
-				"package_namespace": {
-					Type:        "string",
-					Description: "The package namespace",
-				},
-				"package_name": {
-					Type:        "string",
-					Description: "The name of the package",
-				},
-			},
-			Required: []string{"package_type", "package_namespace", "package_name"},
-		},
-	},
-	{
-		Name:        "get_package_source",
-		Description: "Get source repository information for a package",
-		Parameters: llm.JSONSchema{
-			Type: "object",
-			Properties: map[string]llm.Property{
-				"package_type": {
-					Type:        "string",
-					Description: "The type of package (e.g., npm, maven)",
-				},
-				"package_namespace": {
-					Type:        "string",
-					Description: "The package namespace",
-				},
-				"package_name": {
-					Type:        "string",
-					Description: "The name of the package",
-				},
-			},
-			Required: []string{"package_type", "package_namespace", "package_name"},
-		},
-	},
-	{
-		Name:        "get_vex_statements",
-		Description: "Get VEX statements for a vulnerability",
-		Parameters: llm.JSONSchema{
-			Type: "object",
-			Properties: map[string]llm.Property{
-				"vuln_type": {
-					Type:        "string",
-					Description: "The type of vulnerability (cve, ghsa, or osv)",
-				},
-				"vuln_id": {
-					Type:        "string",
-					Description: "The vulnerability identifier",
-				},
-			},
-			Required: []string{"vuln_type", "vuln_id"},
-		},
-	},
-	{
-		Name:        "get_package_equality",
-		Description: "Get package equality assertions",
-		Parameters: llm.JSONSchema{
-			Type: "object",
-			Properties: map[string]llm.Property{
-				"package_type": {
-					Type:        "string",
-					Description: "The type of package (e.g., npm, maven)",
-				},
-				"package_namespace": {
-					Type:        "string",
-					Description: "The package namespace",
-				},
-				"package_name": {
-					Type:        "string",
-					Description: "The name of the package",
-				},
-			},
-			Required: []string{"package_type", "package_namespace", "package_name"},
-		},
-	},
-}
 
 // AgentState tracks the agent's analysis progress
 type AgentState struct {
@@ -247,7 +99,7 @@ func (a *Analyzer) Analyze(ctx context.Context, req models.AnalysisRequest) (*mo
 		llmResp, err := a.llmProvider.Analyze(
 			fmt.Sprintf(SystemPrompt, state.Steps+1, MaxSteps, findings, state.CurrentQuery),
 			llm.Option(func(o *llm.Options) {
-				o.Functions = guacFunctions
+				o.Tools = tools.Specs
 				if req.Options.Model != "" {
 					o.Model = req.Options.Model
 				}
