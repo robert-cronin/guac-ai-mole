@@ -1,102 +1,81 @@
 package config
 
 import (
+	"flag"
 	"fmt"
 	"log/slog"
-	"strings"
+	"os"
 	"time"
-
-	"github.com/spf13/viper"
 )
 
 type Config struct {
-	Server ServerConfig `mapstructure:"server"`
-	OpenAI OpenAIConfig `mapstructure:"openai"`
-	GUAC   GUACConfig   `mapstructure:"guac"`
+	Server ServerConfig
+	OpenAI OpenAIConfig
+	GUAC   GUACConfig
 }
 
 type ServerConfig struct {
-	Port         string        `mapstructure:"port"`
-	Host         string        `mapstructure:"host"`
-	ReadTimeout  time.Duration `mapstructure:"read_timeout"`
-	WriteTimeout time.Duration `mapstructure:"write_timeout"`
+	Port         string
+	Host         string
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
 }
 
 type OpenAIConfig struct {
-	Provider    string `mapstructure:"provider"` // "azure" or "openai"
-	APIKey      string `mapstructure:"api_key"`
-	APIEndpoint string `mapstructure:"api_endpoint"`
-	Model       string `mapstructure:"model"`
-	// Azure specific settings
-	DeploymentName string `mapstructure:"deployment_name"`
-	APIVersion     string `mapstructure:"api_version"`
+	Provider       string
+	APIKey         string
+	APIEndpoint    string
+	Model          string
+	DeploymentName string
+	APIVersion     string
 }
 
 type GUACConfig struct {
-	GraphQLEndpoint string        `mapstructure:"graphql_endpoint"`
-	Timeout         time.Duration `mapstructure:"timeout"`
+	GraphQLEndpoint string
+	Timeout         time.Duration
 }
 
 func LoadConfig() (*Config, error) {
 	slog.Info("Loading configuration")
-	viper.SetConfigName("config")
-	viper.SetConfigType("yaml")
-	viper.AddConfigPath("./config")
 
-	// Environment variables
-	viper.SetEnvPrefix("GUACAIMOLE")
-	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	viper.AutomaticEnv()
+	cfg := &Config{}
 
-	// Bind environment variables to configuration keys
-	err := viper.BindEnv("openai.api_key")
-	if err != nil {
-		return nil, fmt.Errorf("error binding environment variable: %w", err)
-	}
+	// Server flags
+	flag.StringVar(&cfg.Server.Port, "server-port", "8000", "Server port")
+	flag.StringVar(&cfg.Server.Host, "server-host", "0.0.0.0", "Server host")
+	flag.DurationVar(&cfg.Server.ReadTimeout, "server-read-timeout", 30*time.Second, "Server read timeout")
+	flag.DurationVar(&cfg.Server.WriteTimeout, "server-write-timeout", 30*time.Second, "Server write timeout")
 
-	// Default values
-	setDefaults()
+	// OpenAI flags
+	flag.StringVar(&cfg.OpenAI.Provider, "openai-provider", "openai", "OpenAI provider (openai or azure)")
+	flag.StringVar(&cfg.OpenAI.APIEndpoint, "openai-endpoint", "https://api.openai.com/v1", "OpenAI API endpoint")
+	flag.StringVar(&cfg.OpenAI.Model, "openai-model", "gpt-4", "OpenAI model")
+	flag.StringVar(&cfg.OpenAI.DeploymentName, "openai-deployment", "gpt-4o-mini", "Azure OpenAI deployment name")
+	flag.StringVar(&cfg.OpenAI.APIVersion, "openai-api-version", "2023-05-15", "Azure OpenAI API version")
 
-	if err := viper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return nil, fmt.Errorf("error reading config file: %w", err)
-		}
-		// Config file not found - using env vars and defaults
-	}
+	// GUAC flags
+	flag.StringVar(&cfg.GUAC.GraphQLEndpoint, "guac-endpoint", "http://localhost:8080/query", "GUAC GraphQL endpoint")
+	flag.DurationVar(&cfg.GUAC.Timeout, "guac-timeout", 30*time.Second, "GUAC request timeout")
 
-	var cfg Config
-	if err := viper.Unmarshal(&cfg); err != nil {
-		return nil, fmt.Errorf("error unmarshaling config: %w", err)
-	}
+	// Parse flags
+	flag.Parse()
 
-	if err := validateConfig(&cfg); err != nil {
+	// Get API key from environment variable
+	cfg.OpenAI.APIKey = os.Getenv("GUACAIMOLE_OPENAI_API_KEY")
+
+	if err := validateConfig(cfg); err != nil {
 		slog.Error("Configuration validation failed", "error", err)
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	slog.Info("Configuration loaded successfully")
-	return &cfg, nil
-}
-
-func setDefaults() {
-	viper.SetDefault("server.port", "8000")
-	viper.SetDefault("server.host", "0.0.0.0")
-	viper.SetDefault("server.read_timeout", time.Second*30)
-	viper.SetDefault("server.write_timeout", time.Second*30)
-
-	viper.SetDefault("openai.provider", "openai")
-	viper.SetDefault("openai.api_endpoint", "https://api.openai.com/v1")
-	viper.SetDefault("openai.model", "gpt-4o-mini")
-	viper.SetDefault("openai.api_version", "2023-05-15") // Azure default
-
-	viper.SetDefault("guac.graphql_endpoint", "http://localhost:8080/query")
-	viper.SetDefault("guac.timeout", time.Second*30)
+	return cfg, nil
 }
 
 func validateConfig(cfg *Config) error {
 	slog.Info("Validating configuration")
 	if cfg.OpenAI.APIKey == "" {
-		return fmt.Errorf("OpenAI API key is required")
+		return fmt.Errorf("OpenAI API key is required (set GUACAIMOLE_OPENAI_API_KEY environment variable)")
 	}
 
 	if cfg.OpenAI.Provider == "azure" {

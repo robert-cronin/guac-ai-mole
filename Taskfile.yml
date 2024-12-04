@@ -1,6 +1,10 @@
-version: '3'
+version: "3"
 
 tasks:
+  default:
+    cmds:
+      - task: build
+
   build:
     cmds:
       - go build -o bin/guac-ai-mole ./cmd/server/main.go
@@ -21,7 +25,6 @@ tasks:
     cmds:
       - rm -rf bin/
 
-  # Docker tasks
   docker-build:
     cmds:
       - docker build -t guac-ai-mole .
@@ -30,12 +33,6 @@ tasks:
     cmds:
       - docker run guac-ai-mole
 
-  # Development tasks
   dev:
     cmds:
       - go run main.go
-
-  # Default task when just running 'task'
-  default:
-    cmds:
-      - task: build
