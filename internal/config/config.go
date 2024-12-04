@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -37,6 +38,7 @@ type GUACConfig struct {
 }
 
 func LoadConfig() (*Config, error) {
+	slog.Info("Loading configuration")
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath("./config")
@@ -68,9 +70,11 @@ func LoadConfig() (*Config, error) {
 	}
 
 	if err := validateConfig(&cfg); err != nil {
+		slog.Error("Configuration validation failed", "error", err)
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
+	slog.Info("Configuration loaded successfully")
 	return &cfg, nil
 }
 
@@ -90,6 +94,7 @@ func setDefaults() {
 }
 
 func validateConfig(cfg *Config) error {
+	slog.Info("Validating configuration")
 	if cfg.OpenAI.APIKey == "" {
 		return fmt.Errorf("OpenAI API key is required")
 	}

@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/azure"
@@ -16,6 +17,7 @@ type OpenAI struct {
 }
 
 func NewOpenAI(cfg *config.OpenAIConfig) (*OpenAI, error) {
+	slog.Info("Creating OpenAI client", "provider", cfg.Provider)
 	var client *openai.Client
 
 	switch cfg.Provider {
@@ -38,6 +40,7 @@ func NewOpenAI(cfg *config.OpenAIConfig) (*OpenAI, error) {
 }
 
 func (o *OpenAI) Analyze(prompt string, opts ...Option) (*Response, error) {
+	slog.Info("Starting analysis", "prompt", prompt)
 	// Apply options
 	options := &Options{
 		Model:       o.cfg.Model,
@@ -62,8 +65,10 @@ func (o *OpenAI) Analyze(prompt string, opts ...Option) (*Response, error) {
 		},
 	)
 	if err != nil {
+		slog.Error("Analysis failed", "error", err)
 		return nil, err
 	}
+	slog.Info("Analysis completed successfully")
 
 	// Process the response
 	response := &Response{

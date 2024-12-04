@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/sozercan/guac-ai-mole/api/models"
@@ -44,7 +45,6 @@ Previous findings: %s
 User Query: %s`
 )
 
-
 // AgentState tracks the agent's analysis progress
 type AgentState struct {
 	Steps         int
@@ -81,6 +81,7 @@ func New(guacClient *guac.Client, llmProvider llm.Provider) *Analyzer {
 }
 
 func (a *Analyzer) Analyze(ctx context.Context, req models.AnalysisRequest) (*models.AnalysisResponse, error) {
+	slog.Info("Starting analysis", "query", req.Query)
 	startTime := time.Now()
 
 	state := &AgentState{
@@ -94,6 +95,7 @@ func (a *Analyzer) Analyze(ctx context.Context, req models.AnalysisRequest) (*mo
 	for state.Steps < MaxSteps {
 		// Get findings summary from gathered data
 		findings := summarizeFindings(state.GatheredData)
+		slog.Debug("Current findings summary", "findings", findings)
 
 		// Get next action from LLM
 		llmResp, err := a.llmProvider.Analyze(
@@ -112,6 +114,7 @@ func (a *Analyzer) Analyze(ctx context.Context, req models.AnalysisRequest) (*mo
 			}),
 		)
 		if err != nil {
+			slog.Error("LLM analysis failed", "error", err)
 			return nil, fmt.Errorf("LLM analysis failed: %w", err)
 		}
 
@@ -124,17 +127,21 @@ func (a *Analyzer) Analyze(ctx context.Context, req models.AnalysisRequest) (*mo
 				Function:  llmResp.FunctionCall.Name,
 				Arguments: []byte(llmResp.FunctionCall.Arguments),
 			}
+			slog.Debug("LLM requested function call", "function", action.Function, "arguments", string(action.Arguments))
 		} else {
 			// LLM provided a direct response, parse it as an action
 			action.Action = "final_response"
 			action.Message = llmResp.Content
+			slog.Debug("LLM provided final response", "message", action.Message)
 		}
 
 		// Handle the agent's chosen action
 		switch action.Action {
 		case "function_call":
+			slog.Info("Executing function call", "function", action.Function)
 			stepData, err := a.executeFunction(ctx, action.Function, action.Arguments)
 			if err != nil {
+				slog.Error("Function execution failed", "error", err)
 				return nil, fmt.Errorf("function execution failed: %w", err)
 			}
 
@@ -146,8 +153,10 @@ func (a *Analyzer) Analyze(ctx context.Context, req models.AnalysisRequest) (*mo
 				Findings:     fmt.Sprintf("Step %d: %s returned %+v", state.Steps+1, action.Function, stepData),
 			})
 			state.Steps++
+			slog.Debug("Recorded step data", "stepData", stepData)
 
 		case "final_response":
+			slog.Info("Returning final response")
 			// Agent has decided to return final results
 			return &models.AnalysisResponse{
 				Result: action.Message,
@@ -164,6 +173,7 @@ func (a *Analyzer) Analyze(ctx context.Context, req models.AnalysisRequest) (*mo
 			}, nil
 
 		default:
+			slog.Error("Unknown agent action", "action", action.Action)
 			return nil, fmt.Errorf("unknown agent action: %s", action.Action)
 		}
 	}
@@ -179,6 +189,7 @@ func (a *Analyzer) Analyze(ctx context.Context, req models.AnalysisRequest) (*mo
 		}),
 	)
 	if err != nil {
+		slog.Error("Failed to generate final summary", "error", err)
 		return nil, fmt.Errorf("failed to generate final summary: %w", err)
 	}
 
@@ -198,6 +209,7 @@ func (a *Analyzer) Analyze(ctx context.Context, req models.AnalysisRequest) (*mo
 }
 
 func (a *Analyzer) executeFunction(ctx context.Context, functionName string, arguments json.RawMessage) (interface{}, error) {
+	slog.Info("Executing function", "functionName", functionName)
 	switch functionName {
 	case "graphql_query":
 		var args struct {
@@ -205,11 +217,13 @@ func (a *Analyzer) executeFunction(ctx context.Context, functionName string, arg
 			PackageName string `json:"package_name"`
 		}
 		if err := json.Unmarshal(arguments, &args); err != nil {
+			slog.Error("Failed to parse arguments", "error", err)
 			return nil, fmt.Errorf("failed to parse arguments: %w", err)
 		}
 		return a.guacClient.ExecuteGraphQL(ctx, args.PackageType, args.PackageName)
 
 	default:
+		slog.Error("Unknown function", "functionName", functionName)
 		return nil, fmt.Errorf("unknown function: %s", functionName)
 	}
 }

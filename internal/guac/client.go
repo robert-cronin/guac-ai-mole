@@ -3,6 +3,7 @@ package guac
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -14,6 +15,7 @@ type Client struct {
 }
 
 func NewClient(endpoint string) (*Client, error) {
+	slog.Info("Creating GUAC client", "endpoint", endpoint)
 	if endpoint == "" {
 		return nil, fmt.Errorf("GUAC endpoint cannot be empty")
 	}
@@ -30,6 +32,7 @@ func NewClient(endpoint string) (*Client, error) {
 }
 
 func (c *Client) ExecuteGraphQL(ctx context.Context, query string, variables interface{}) (*graphql.Response, error) {
+	slog.Info("Executing GraphQL query", "query", query, "variables", variables)
 	req := graphql.Request{
 		Query:     query,
 		Variables: variables,
@@ -38,8 +41,10 @@ func (c *Client) ExecuteGraphQL(ctx context.Context, query string, variables int
 
 	err := c.client.MakeRequest(ctx, &req, resp)
 	if err != nil {
+		slog.Error("GraphQL query execution failed", "error", err)
 		return nil, err
 	}
 
+	slog.Info("GraphQL query executed successfully")
 	return resp, nil
 }

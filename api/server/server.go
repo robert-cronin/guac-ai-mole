@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -61,16 +62,24 @@ func (s *Server) setupRoutes() {
 }
 
 func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
+	slog.Info("Handling analyze request")
+
 	var req models.AnalysisRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
+	
+	slog.Debug("Received analysis request", "request", req)
 
 	ctx := r.Context()
 	result, err := s.analyzer.Analyze(ctx, req)
 	if err != nil {
+		slog.Error("Analysis request failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
+
+	slog.Debug("Analysis request completed successfully", "result", result)
 
 	w.Header().Set("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(result)
@@ -80,10 +89,16 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	slog.Info("Handling health check request")
+
 	err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	if err != nil {
+		slog.Error("Health check request failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
+
+	slog.Debug("Health check request completed successfully")
 }
 
 func (s *Server) Run() error {

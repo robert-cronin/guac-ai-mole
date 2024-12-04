@@ -1,8 +1,14 @@
 package tools
 
 import (
+	"log/slog"
+
 	"github.com/openai/openai-go"
 )
+
+func init() {
+	slog.Info("Initializing GUAC functions")
+}
 
 // Define GUAC functions that can be called by the LLM
 var Specs = []openai.ChatCompletionToolParam{
