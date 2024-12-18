@@ -1,4 +1,4 @@
-package models
+package apimodels
 
 type AnalysisResponse struct {
 	// The analyzed result/answer

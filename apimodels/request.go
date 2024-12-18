@@ -1,4 +1,4 @@
-package models
+package apimodels
 
 type AnalysisRequest struct {
 	// Query is the natural language query to analyze

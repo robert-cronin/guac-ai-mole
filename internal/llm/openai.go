@@ -8,12 +8,14 @@ import (
 	"github.com/openai/openai-go/azure"
 	"github.com/openai/openai-go/option"
 	"github.com/sozercan/guac-ai-mole/internal/config"
+	"github.com/sozercan/guac-ai-mole/internal/guac/tools"
 )
 
 // OpenAI client implementation
 type OpenAI struct {
 	client *openai.Client
 	cfg    *config.OpenAIConfig
+	tools  []openai.ChatCompletionToolParam
 }
 
 func NewOpenAI(cfg *config.OpenAIConfig) (*OpenAI, error) {
@@ -36,6 +38,7 @@ func NewOpenAI(cfg *config.OpenAIConfig) (*OpenAI, error) {
 	return &OpenAI{
 		client: client,
 		cfg:    cfg,
+		tools:  tools.Definitions,
 	}, nil
 }
 
