@@ -13,7 +13,7 @@ type AnalysisResponse struct {
 
 type SupportingData struct {
 	// GraphQL queries executed
-	Queries []string `json:"queries,omitempty"`
+	Queries []interface{} `json:"queries,omitempty"`
 
 	// Raw GUAC data retrieved
 	GuacData interface{} `json:"guacData,omitempty"`

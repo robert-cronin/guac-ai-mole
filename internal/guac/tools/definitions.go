@@ -10,17 +10,6 @@ import (
 	"github.com/openai/openai-go"
 )
 
-var Definitions = []openai.ChatCompletionToolParam{}
-
-func init() {
-	definitions, err := generateDefinitionsFromGUAC()
-	if err != nil {
-		slog.Error("Failed to generate tool definitions", "error", err)
-		return
-	}
-	Definitions = definitions
-}
-
 // maps a type representing an operation to a description that we'll expose as an LLM tool
 type allowedOperationType struct {
 	Operation   interface{}

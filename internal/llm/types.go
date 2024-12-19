@@ -6,7 +6,7 @@ import (
 
 type Provider interface {
 	// Analyze takes a prompt and returns a structured response
-	Analyze(prompt string, opts ...Option) (*Response, error)
+	Analyze(systemMessages []string, userMessages []string, opts ...Option) (*Response, error)
 }
 
 type Usage struct {

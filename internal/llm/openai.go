@@ -18,7 +18,7 @@ type OpenAI struct {
 	tools  []openai.ChatCompletionToolParam
 }
 
-func NewOpenAI(cfg *config.OpenAIConfig) (*OpenAI, error) {
+func NewOpenAI(cfg *config.OpenAIConfig) (Provider, error) {
 	slog.Info("Creating OpenAI client", "provider", cfg.Provider)
 	var client *openai.Client
 
@@ -42,38 +42,46 @@ func NewOpenAI(cfg *config.OpenAIConfig) (*OpenAI, error) {
 	}, nil
 }
 
-func (o *OpenAI) Analyze(prompt string, opts ...Option) (*Response, error) {
-	slog.Info("Starting analysis", "prompt", prompt)
-	// Apply options
+func (o *OpenAI) Analyze(systemMessages []string, userMessages []string, opts ...Option) (*Response, error) {
+	slog.Info("Starting analysis", "systemMessages", systemMessages, "userMessages", userMessages)
 	options := &Options{
 		Model:       o.cfg.Model,
 		Temperature: 0,
 		MaxTokens:   1000,
 	}
+
 	for _, opt := range opts {
 		opt(options)
 	}
 
-	resp, err := o.client.Chat.Completions.New(
-		context.Background(),
-		openai.ChatCompletionNewParams{
-			Model: openai.F(options.Model),
-			Messages: openai.F([]openai.ChatCompletionMessageParamUnion{
-				openai.SystemMessage("You are guac-ai-mole, a helpful AI assistant analyzing software supply chain data."),
-				openai.UserMessage(prompt),
-			}),
-			Tools:       openai.F(options.Tools),
-			Temperature: openai.F(options.Temperature),
-			MaxTokens:   openai.F(options.MaxTokens),
-		},
-	)
+	msgs := []openai.ChatCompletionMessageParamUnion{}
+
+	for _, msg := range systemMessages {
+		msgs = append(msgs, openai.SystemMessage(msg))
+	}
+
+	for _, msg := range userMessages {
+		msgs = append(msgs, openai.UserMessage(msg))
+	}
+
+	params := openai.ChatCompletionNewParams{
+		Model:       openai.F(options.Model),
+		Messages:    openai.F(msgs),
+		Temperature: openai.F(options.Temperature),
+		MaxTokens:   openai.F(options.MaxTokens),
+	}
+
+	if len(options.Tools) > 0 {
+		params.Tools = openai.F(options.Tools)
+	}
+
+	resp, err := o.client.Chat.Completions.New(context.Background(), params)
 	if err != nil {
 		slog.Error("Analysis failed", "error", err)
 		return nil, err
 	}
 	slog.Info("Analysis completed successfully")
 
-	// Process the response
 	response := &Response{
 		Usage: Usage{
 			PromptTokens:     resp.Usage.PromptTokens,
@@ -82,7 +90,6 @@ func (o *OpenAI) Analyze(prompt string, opts ...Option) (*Response, error) {
 		},
 	}
 
-	// Check for function calls in the response
 	if len(resp.Choices) > 0 && len(resp.Choices[0].Message.ToolCalls) > 0 {
 		toolCall := resp.Choices[0].Message.ToolCalls[0]
 		response.FunctionCall = &FunctionResponse{
