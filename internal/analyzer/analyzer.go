@@ -3,24 +3,18 @@ package analyzer
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/openai/openai-go"
 	"github.com/sozercan/guac-ai-mole/apimodels"
 	"github.com/sozercan/guac-ai-mole/internal/guac"
-	"github.com/sozercan/guac-ai-mole/internal/guac/tools"
 	"github.com/sozercan/guac-ai-mole/internal/llm"
 )
 
 const (
 	MaxSteps = 5
-)
-
-var (
-	errGuacUnreachable = errors.New("guac unreachable after retry")
-	maxGUACRetries     = 2
 )
 
 var SystemPrompt = `You are an AI agent analyzing software supply chain data.
@@ -36,7 +30,23 @@ If you attempt to call a function with the same arguments again, you will receiv
 Thus, do not waste steps by repeating the same call. If no new information is available, proceed to final answer.
 
 If 'top-level package GUAC heuristic' or similar references appear, it indicates some form of dependency or related component was found.
-Do not conclude 'no dependencies' if any IsDependency results show packages or files. Instead, list them and accurately describe them.`
+Do not conclude 'no dependencies' if any IsDependency results show packages or files. Instead, list them and accurately describe them.
+
+A purl is a URL composed of seven components:
+
+scheme:type/namespace/name@version?qualifiers#subpath
+Components are separated by a specific character for unambiguous parsing.
+
+The definition for each components is:
+
+scheme: this is the URL scheme with the constant value of "pkg". One of the primary reason for this single scheme is to facilitate the future official registration of the "pkg" scheme for package URLs. Required.
+type: the package "type" or package "protocol" such as maven, npm, nuget, gem, pypi, etc. Required.
+namespace: some name prefix such as a Maven groupid, a Docker image owner, a GitHub user or organization. Optional and type-specific.
+name: the name of the package. Required.
+version: the version of the package. Optional.
+qualifiers: extra qualifying data for a package such as an OS, architecture, a distro, etc. Optional and type-specific.
+subpath: extra subpath within a package, relative to the package root. Optional.
+`
 
 type AgentState struct {
 	Steps         int
@@ -61,15 +71,26 @@ type AgentAction struct {
 }
 
 type Analyzer struct {
-	guacClient  *guac.Client
 	llmProvider llm.Provider
+	toolParams  []openai.ChatCompletionToolParam
+	toolMap     map[string]guac.ToolFunctionType
 }
 
-func New(guacClient *guac.Client, llmProvider llm.Provider) *Analyzer {
-	return &Analyzer{
-		guacClient:  guacClient,
-		llmProvider: llmProvider,
+func New(llmProvider llm.Provider, toolDefs []guac.DefinitionType) *Analyzer {
+	// decompose toolDefs into toolParams and toolMap
+	defs := make([]openai.ChatCompletionToolParam, 0, len(toolDefs))
+	toolMap := make(map[string]guac.ToolFunctionType)
+	for _, d := range toolDefs {
+		defs = append(defs, d.Spec)
+		fname := d.Spec.Function.Value.Name.Value
+		toolMap[fname] = d.Function
 	}
+	a := &Analyzer{
+		llmProvider: llmProvider,
+		toolParams:  defs,
+		toolMap:     toolMap,
+	}
+	return a
 }
 
 func (a *Analyzer) Analyze(ctx context.Context, req apimodels.AnalysisRequest) (*apimodels.AnalysisResponse, error) {
@@ -91,21 +112,25 @@ func (a *Analyzer) Analyze(ctx context.Context, req apimodels.AnalysisRequest) (
 
 		switch action.Action {
 		case "function_call":
-			err := a.handleFunctionCall(ctx, state, action)
+			stepData, err := a.dispatchTool(ctx, action.Function, action.Arguments)
 			if err != nil {
-				if errors.Is(err, errGuacUnreachable) {
-					state.GatheredData = append(state.GatheredData, StepData{
-						StepNumber:   state.Steps + 1,
-						FunctionName: action.Function,
-						Arguments:    action.Arguments,
-						Data:         "Failed to reach GUAC after multiple attempts.",
-						Findings:     "GUAC unreachable after multiple attempts.",
-					})
-					state.Steps++
-					return a.generateGUACFailureExplanation(ctx, req, startTime, state)
-				}
-				return nil, err
+				state.GatheredData = append(state.GatheredData, StepData{
+					StepNumber:   state.Steps + 1,
+					FunctionName: action.Function,
+					Arguments:    action.Arguments,
+					Data:         nil,
+					Findings:     fmt.Sprintf("Step %d: %s failed: %v", state.Steps+1, action.Function, err),
+				})
+			} else {
+				state.GatheredData = append(state.GatheredData, StepData{
+					StepNumber:   state.Steps + 1,
+					FunctionName: action.Function,
+					Arguments:    action.Arguments,
+					Data:         stepData,
+					Findings:     fmt.Sprintf("Step %d: %s returned %+v", state.Steps+1, action.Function, stepData),
+				})
 			}
+			state.Steps++
 		case "final_response":
 			return a.handleFinalResponse(startTime, req, state, llmUsage, action.Message)
 		default:
@@ -114,7 +139,6 @@ func (a *Analyzer) Analyze(ctx context.Context, req apimodels.AnalysisRequest) (
 		}
 	}
 
-	// If we've reached max steps, generate final summary
 	return a.generateFinalSummary(ctx, req, startTime, state)
 }
 
@@ -135,7 +159,7 @@ func (a *Analyzer) getNextAgentAction(ctx context.Context, req apimodels.Analysi
 		[]string{systemContent},
 		[]string{userContent},
 		llm.Option(func(o *llm.Options) {
-			o.Tools = tools.Definitions
+			o.Tools = a.toolParams
 			if req.Options.Model != "" {
 				o.Model = req.Options.Model
 			}
@@ -186,45 +210,6 @@ func (a *Analyzer) buildHistoryReminder(state *AgentState) string {
 	return reminder
 }
 
-func (a *Analyzer) handleFunctionCall(ctx context.Context, state *AgentState, action AgentAction) error {
-	slog.Info("Executing function call", "function", action.Function)
-
-	// check if this exact call was previously made
-	for _, sd := range state.GatheredData {
-		if sd.FunctionName == action.Function && jsonEqual(sd.Arguments, action.Arguments) {
-			findings := fmt.Sprintf("Step %d: %s called again with same arguments, reusing results from step %d",
-				state.Steps+1, action.Function, sd.StepNumber)
-
-			state.GatheredData = append(state.GatheredData, StepData{
-				StepNumber:   state.Steps + 1,
-				FunctionName: action.Function,
-				Arguments:    action.Arguments,
-				Data:         sd.Data,
-				Findings:     findings,
-			})
-			state.Steps++
-			return nil
-		}
-	}
-
-	stepData, err := a.executeFunction(ctx, action.Function, action.Arguments)
-	if err != nil {
-		slog.Error("Function execution failed", "error", err)
-		return fmt.Errorf("function execution failed: %w", err)
-	}
-
-	state.GatheredData = append(state.GatheredData, StepData{
-		StepNumber:   state.Steps + 1,
-		FunctionName: action.Function,
-		Arguments:    action.Arguments,
-		Data:         stepData,
-		Findings:     fmt.Sprintf("Step %d: %s returned %+v", state.Steps+1, action.Function, stepData),
-	})
-	state.Steps++
-	slog.Debug("Recorded step data", "stepData", stepData)
-	return nil
-}
-
 func (a *Analyzer) handleFinalResponse(startTime time.Time, req apimodels.AnalysisRequest, state *AgentState, usage llm.Usage, message string) (*apimodels.AnalysisResponse, error) {
 	slog.Info("Returning final response")
 	finalMessage := truncateString(message, 5000)
@@ -263,6 +248,7 @@ In your summary provide a truthful and concise final answer that reflects all th
 			if req.Options.Model != "" {
 				o.Model = req.Options.Model
 			}
+			// No tools needed for final summary
 		}),
 	)
 	if err != nil {
@@ -286,17 +272,45 @@ In your summary provide a truthful and concise final answer that reflects all th
 	}, nil
 }
 
-func (a *Analyzer) executeFunction(ctx context.Context, functionName string, arguments json.RawMessage) (string, error) {
-	slog.Info("Executing function", "functionName", functionName)
+func (a *Analyzer) dispatchTool(ctx context.Context, functionName string, arguments json.RawMessage) (string, error) {
+	slog.Info("Dispatching tool call", "functionName", functionName)
 
-	result, err := a.callGUACWithRetry(ctx, functionName, arguments, maxGUACRetries)
-	if err != nil {
-		return "", err
+	// Check if this is a GUAC operation or a local tool.
+	// The analyzer just needs to call the appropriate tool from the definitions we passed in.
+	// We'll assume the analyzer only has the openai.Function definitions. We need a way to map functionName back to a tool function.
+
+	// Since we passed toolParams to LLM from GUACTools.GetDefinitions(),
+	// we need a reference to the actual GUACTools or a mapping from functionName to its handler.
+	// One solution: Keep a map from functionName to DefinitionType (fn) in Analyzer as well.
+
+	// For simplicity here, let's assume we have a map or we changed Analyzer signature to also store the GUACTools or a map.
+	// Let's say we store tool name -> function in a map: a.toolMap[functionName] = (fn)
+	// The code snippet below is illustrative. You will need to pass in or build this map at Analyzer construction time.
+
+	// For example:
+	// In New(), after receiving toolDefinitions (from guacTools.GetDefinitions()), we build a map:
+	// a.toolMap = make(map[string]ToolFunctionType)
+	// For each definition in toolDefinitions:
+	//   fname := definition.Spec.Function.Value.Name.Value
+	//   a.toolMap[fname] = definition.Function (the actual function that we got from GUACTools)
+	// We'll just assume we did that.
+
+	toolFn, ok := a.toolMap[functionName]
+	if !ok {
+		return "", fmt.Errorf("unknown functionName: %s", functionName)
 	}
 
-	jsonBytes, err := json.Marshal(result)
+	// Call the tool function with arguments.
+	// The tool function expects raw JSON arguments as a single parameter in this design.
+	resultIface, err := toolFn(ctx, arguments)
 	if err != nil {
-		slog.Error("Failed to marshal GUAC result to JSON", "error", err)
+		return "", fmt.Errorf("tool function failed: %w", err)
+	}
+
+	// Marshal result to string.
+	jsonBytes, err := json.Marshal(resultIface)
+	if err != nil {
+		slog.Error("Failed to marshal tool result to JSON", "error", err)
 		return "error: failed to parse tool output", nil
 	}
 
@@ -304,68 +318,7 @@ func (a *Analyzer) executeFunction(ctx context.Context, functionName string, arg
 	if len(out) > 5000 {
 		out = out[:5000] + "\n[truncated]"
 	}
-
 	return out, nil
-}
-
-func (a *Analyzer) callGUACWithRetry(ctx context.Context, functionName string, arguments json.RawMessage, maxAttempts int) (interface{}, error) {
-	var lastErr error
-	for i := 0; i < maxAttempts; i++ {
-		slog.Info("Calling GUAC operation", "function", functionName, "attempt", i+1)
-		result, err := a.guacClient.CallGUACOperation(ctx, functionName, arguments)
-		if err == nil {
-			return result, nil
-		}
-		lastErr = err
-		slog.Warn("Failed to call GUAC operation", "attempt", i+1, "function", functionName, "error", err)
-	}
-	return nil, fmt.Errorf("%w: %v", errGuacUnreachable, lastErr)
-}
-
-func (a *Analyzer) generateGUACFailureExplanation(ctx context.Context, req apimodels.AnalysisRequest, startTime time.Time, state *AgentState) (*apimodels.AnalysisResponse, error) {
-	slog.Info("Generating GUAC failure explanation")
-
-	systemContent := fmt.Sprintf(`You attempted to use GUAC tools multiple times but they failed.
-Now provide a concise, friendly message to the user explaining that you cannot reach the GUAC service 
-and thus cannot complete their request. Apologize briefly and ask them to try again later.
-
-Original query: %s
-
-Previous findings:
-%s
-`, state.OriginalQuery, summarizeFindings(state.GatheredData))
-
-	userContent := ""
-
-	finalResp, err := a.llmProvider.Analyze(
-		[]string{systemContent},
-		[]string{userContent},
-		llm.Option(func(o *llm.Options) {
-			if req.Options.Model != "" {
-				o.Model = req.Options.Model
-			}
-			o.Tools = nil
-		}),
-	)
-	if err != nil {
-		slog.Error("Failed to generate GUAC failure explanation", "error", err)
-		return nil, fmt.Errorf("failed to generate GUAC failure explanation: %w", err)
-	}
-
-	finalMessage := truncateString(finalResp.Content, 5000)
-	return &apimodels.AnalysisResponse{
-		Result: finalMessage,
-		SupportingData: &apimodels.SupportingData{
-			Queries:  getFunctionCalls(state.GatheredData),
-			GuacData: state.GatheredData,
-		},
-		Metadata: apimodels.AnalysisMetadata{
-			Duration:   time.Since(startTime).String(),
-			Model:      req.Options.Model,
-			TokensUsed: finalResp.Usage.TotalTokens,
-			Steps:      state.Steps,
-		},
-	}, nil
 }
 
 func summarizeFindings(data []StepData) string {
@@ -397,11 +350,4 @@ func truncateString(s string, maxLen int) string {
 		return s[:maxLen] + "\n[truncated]"
 	}
 	return s
-}
-
-func jsonEqual(a, b json.RawMessage) bool {
-	var ja, jb interface{}
-	_ = json.Unmarshal(a, &ja)
-	_ = json.Unmarshal(b, &jb)
-	return fmt.Sprintf("%v", ja) == fmt.Sprintf("%v", jb)
 }

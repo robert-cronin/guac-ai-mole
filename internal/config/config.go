@@ -25,7 +25,7 @@ type OpenAIConfig struct {
 	APIKey         string `envconfig:"OPENAI_API_KEY" required:"true"`
 	APIEndpoint    string `envconfig:"OPENAI_ENDPOINT" default:"https://api.openai.com/v1"`
 	Model          string `envconfig:"OPENAI_MODEL" default:"gpt-4o-mini"`
-	DeploymentName string `envconfig:"OPENAI_DEPLOYMENT" default:"gpt-4o-mini"`
+	DeploymentName string `envconfig:"OPENAI_DEPLOYMENT" default:"gpt-4o"`
 	APIVersion     string `envconfig:"OPENAI_API_VERSION" default:"2023-05-15"`
 }
 

@@ -8,7 +8,6 @@ import (
 	"github.com/openai/openai-go/azure"
 	"github.com/openai/openai-go/option"
 	"github.com/sozercan/guac-ai-mole/internal/config"
-	"github.com/sozercan/guac-ai-mole/internal/guac/tools"
 )
 
 // OpenAI client implementation
@@ -38,7 +37,6 @@ func NewOpenAI(cfg *config.OpenAIConfig) (Provider, error) {
 	return &OpenAI{
 		client: client,
 		cfg:    cfg,
-		tools:  tools.Definitions,
 	}, nil
 }
 
